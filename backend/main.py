@@ -16,13 +16,15 @@ from sqlalchemy.orm import Session
 load_dotenv()
 
 from database import (AnalysisRecord, ChatMessage, DiaryEntry, Profile, SessionLocal,
-                      User, dump_json, get_local_secret, init_database, load_json)
+                      User, dump_json, init_database, load_json)
 from nutrition import search_food, scale_nutrients
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MODEL = os.getenv("OPENAI_MODEL", "gpt-6-luna")
-JWT_SECRET = os.getenv("NUTRISCAN_SECRET_KEY") or get_local_secret()
+JWT_SECRET = os.getenv("NUTRISCAN_SECRET_KEY")
+if not JWT_SECRET:
+    raise RuntimeError("Configura NUTRISCAN_SECRET_KEY en backend/.env antes de usar Supabase.")
 JWT_ALGORITHM = "HS256"
 TOKEN_DAYS = 7
 password_hash = PasswordHash.recommended()

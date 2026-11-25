@@ -1,14 +1,24 @@
 import json
-import secrets
+import os
 from datetime import datetime, timezone
-from pathlib import Path
 
 from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, create_engine
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
-BASE_DIR = Path(__file__).resolve().parent
-DATABASE_URL = f"sqlite:///{BASE_DIR / 'nutriscan.db'}"
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+if not DATABASE_URL:
+    raise RuntimeError("Configura DATABASE_URL de Supabase en backend/.env.")
+
+database_url = make_url(DATABASE_URL)
+if database_url.drivername not in {"postgres", "postgresql", "postgresql+psycopg"}:
+    raise RuntimeError("DATABASE_URL debe apuntar a PostgreSQL de Supabase.")
+IS_POSTGRES = True
+# Psycopg 3 and required SSL keep the connection to hosted PostgreSQL encrypted.
+database_url = database_url.set(drivername="postgresql+psycopg")
+if "sslmode" not in database_url.query:
+    database_url = database_url.update_query_dict({"sslmode": "require"})
+engine = create_engine(database_url, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
@@ -85,17 +95,17 @@ class ChatMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 
-def get_local_secret() -> str:
-    secret_path = BASE_DIR / "local_secret.key"
-    if secret_path.exists():
-        return secret_path.read_text(encoding="utf-8").strip()
-    secret = secrets.token_hex(32)
-    secret_path.write_text(secret, encoding="utf-8")
-    return secret
-
-
 def init_database():
     Base.metadata.create_all(bind=engine)
+    if IS_POSTGRES:
+        # The browser never uses the Supabase Data API. Keep these tables
+        # unavailable to anon/authenticated API roles as defense in depth;
+        # FastAPI connects privately and scopes records by its own user ID.
+        from sqlalchemy import text
+
+        with engine.begin() as connection:
+            for table_name in ("users", "profiles", "analyses", "diary_entries", "food_records", "chat_messages"):
+                connection.execute(text(f'ALTER TABLE "{table_name}" ENABLE ROW LEVEL SECURITY'))
 
 
 def dump_json(value) -> str:
